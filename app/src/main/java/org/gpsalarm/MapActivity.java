@@ -1,6 +1,7 @@
 package org.gpsalarm;
 
 import android.Manifest;
+import android.app.AlarmManager;
 import android.app.Dialog;
 import android.app.Notification;
 import android.app.Notification.Builder;
@@ -68,6 +69,7 @@ import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 
 import java.util.ArrayList;
+import java.util.concurrent.TimeUnit;
 
 import static android.provider.Settings.System.DEFAULT_ALARM_ALERT_URI;
 
@@ -80,7 +82,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
     final int PERMISSION_FINE_LOCATIONS = 101;
     final int MIN_INTERVAL = 1000;
     final String TAG = "MapActivity";
-    String ringtonePath;
     int maximumSpeed;
     static int interval = 0;              // interval between tracking requests
     boolean isTracking = false;    // is tracking going on
@@ -95,14 +96,17 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
     Marker marker;    // Marker of chosen or to be added location
     Circle circle;
     float alarmRadius;    //  Can be set through preferences.
-    MediaPlayer mediaPlayer;
     LocationManager locationManager;
     LocationRequest locationRequest;  // variable for requesting location
-    AlarmReceiver alarm;
     WifiManager wifiManager;
     InternalStorage internalStorage; //NOTE: points are saved in a file on sdcard
     ArrayList<LocationData> locationDataList;
     LocationData selectedLocationData; // location of selected target
+
+    private PendingIntent pendingIntent;
+
+    private int statusForAlarm;
+
 
     enum Estimate { // List of travel distance estimation values
         FAR, NEAR, DISABLED;
@@ -110,7 +114,7 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        Log.v(TAG, "onCreate started");
+        Log.v(TAG, "onCreate(MapActivity) started");
         super.onCreate(savedInstanceState);
         setInternalStorage();
 
@@ -122,40 +126,35 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         checkGPS();
         checkAndConnect();
 
-        if (googleServicesAvailable()) {
-            setContentView(R.layout.activity_map);
-            initMap();
+        setContentView(R.layout.activity_map);
+        initMap();
 
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
-            setAlarmRadius(Integer.parseInt(prefs.getString("alarmRadius", "500")));
-            maximumSpeed = Integer.parseInt(prefs.getString("maximumSpeed", "100"));
-            ringtonePath = prefs.getString("alarmRingtone", DEFAULT_ALARM_ALERT_URI.toString());
-            initSound();
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getBaseContext());
+        setAlarmRadius(Integer.parseInt(prefs.getString("alarmRadius", "500")));
+        maximumSpeed = Integer.parseInt(prefs.getString("maximumSpeed", "100"));
+        triggerAlarmManager(0);
 
-            SharedPreferences.OnSharedPreferenceChangeListener prefListener = new SharedPreferences.OnSharedPreferenceChangeListener() {
-                public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
+        SharedPreferences.OnSharedPreferenceChangeListener prefListener = new SharedPreferences.OnSharedPreferenceChangeListener() {
+            public void onSharedPreferenceChanged(SharedPreferences prefs, String key) {
 
-                    if (key.equals("mapType")) {
-                        changeMapType(prefs.getString("2", "2"));
-                    }
-                    if (key.equals("alarmRadius")) {
-                        setAlarmRadius(Integer.parseInt(prefs.getString(key, "500")));
-                        clearMarker();
-                    }
-                    if (key.equals("alarmRingtone")) {
-                        ringtonePath = prefs.getString("alarmRingtone", DEFAULT_ALARM_ALERT_URI.toString());
-                        initSound();
-                    }
-
+                if (key.equals("mapType")) {
+                    changeMapType(prefs.getString("2", "2"));
                 }
-            };
-            prefs.registerOnSharedPreferenceChangeListener(prefListener);
-            locationDataList = internalStorage.readLocationDataList(); // Retrieve the list from internal storage
-        }
+                if (key.equals("alarmRadius")) {
+                    setAlarmRadius(Integer.parseInt(prefs.getString(key, "500")));
+                    clearMarker();
+                }
+                if (key.equals("alarmRingtone")) {
+                    triggerAlarmManager(0);
+                }
+
+            }
+        };
+        prefs.registerOnSharedPreferenceChangeListener(prefListener);
+        locationDataList = internalStorage.readLocationDataList(); // Retrieve the list from internal storage
 
         // Google map searching by address name
         // See https://g.co/AppIndexing/AndroidStudio for more information.
-        /** TODO Fix app crash, after pressing Add alarm*/
         PlaceAutocompleteFragment autocompleteFragment = (PlaceAutocompleteFragment)
                 getFragmentManager().findFragmentById(R.id.place_autocomplete_fragment);
         autocompleteFragment.setOnPlaceSelectedListener(new PlaceSelectionListener() {
@@ -180,6 +179,9 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
             public void onError(Status status) {
             }
         });
+
+        Intent alarmIntent = new Intent(MapActivity.this, AlarmReceiver.class);
+        pendingIntent = PendingIntent.getBroadcast(MapActivity.this, 133, alarmIntent, 0);
     }
 
     @Override
@@ -193,25 +195,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
     private void initMap() {
         MapFragment myMapFragment = (MapFragment) getFragmentManager().findFragmentById(R.id.fragment);
         myMapFragment.getMapAsync(this);            // Previously getMap
-    }
-
-    public boolean googleServicesAvailable() {
-        GoogleApiAvailability api = GoogleApiAvailability.getInstance();
-        int isAvailable = api.isGooglePlayServicesAvailable(this);      // Can return 3 different values
-
-        if (isAvailable == ConnectionResult.SUCCESS) {
-            return true;
-        } else if (api.isUserResolvableError(isAvailable)) {
-            Dialog dialog = api.getErrorDialog(this, isAvailable, 0);
-            dialog.show();
-        } else if (api.isUserResolvableError(isAvailable)) {
-            Dialog dialog = api.getErrorDialog(this, isAvailable, 0);
-            dialog.show();
-        } else {
-            Toast.makeText(this, "Can't connect to play services!", Toast.LENGTH_LONG).show();
-        }
-
-        return false;
     }
 
     @Override
@@ -336,19 +319,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         googleMap.moveCamera(camUpdate);
     }
 
-    /*public void geoLocate(@SuppressWarnings("unused") View view) {
-        //It's possible to search by address or geographical coordinates
-        checkGPS();
-        if (addressName != null) {
-            double lat = addressGeo.latitude;
-            double lng = addressGeo.longitude;
-            goToLocationZoom(lat, lng, 15);
-            setMarker(lat, lng);
-        } else {
-            Toast.makeText(this, "No such location found. \nTry a different keyword.", Toast.LENGTH_LONG).show();
-        }
-    }*/
-
     void setMarker(double lat, double lng) {
         clearMarker();  // If marker has a reference, remove it.
         MarkerOptions options = new MarkerOptions()                 // This MarkerOptions object is needed to add a marker.
@@ -398,6 +368,13 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
                 intent = new Intent(this, HelpActivity.class);
                 startActivity(intent);
                 return true;
+            case R.id.menuItemExit:
+                intent = new Intent(this, StartActivity.class);
+                intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                intent.putExtra("Exit", true);
+                startActivity(intent);
+                finish();
+                //System.exit(0); //only kills this method and reloads StartActivity.java
             default:
                 return super.onOptionsItemSelected(item);
         }
@@ -429,8 +406,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
                             }
                         }
                         addLocationDataToList(name, marker);
-                        //FIXME Crashes app when "Save as" is pressed
-                        // Possible fix - comment/delete everything associated with "Search Location" button as they could overlap
                         MapActivity.this.marker.hideInfoWindow();
                     }
                 });
@@ -483,8 +458,9 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
                     if (!isFinishing()) { // check that activity window is not closing
                         final PopupWindow popupWindow = new PopupWindow(layout, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
                         popupWindow.showAtLocation(layout, Gravity.CENTER, 0, 0);
-                        popupWindow.setOutsideTouchable(false);   // Set these twho to true, if want to be clickable outside window
+                        popupWindow.setOutsideTouchable(false);   // Set these two to true, if want to be clickable outside window
                         popupWindow.setFocusable(false);
+                        triggerAlarmManager(0);
                         // TODO should check, if both handlers are necessary
                         popupWindow.setOnDismissListener(new PopupWindow.OnDismissListener() {
                             @Override
@@ -502,7 +478,7 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
                 }
 
                 void closePopUp(PopupWindow popupWindow) {
-                    mediaPlayer.release();
+                    stopAlarmManager();
                     clearMarker();
                     popupWindow.dismiss();
                 }
@@ -534,10 +510,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
 
     public void setAlarmRadius(int newRadius) {
         alarmRadius = newRadius;
-    }
-
-    public void initSound() {
-        mediaPlayer = MediaPlayer.create(this, Uri.parse(ringtonePath));
     }
 
     public void addLocationDataToList(String name, Marker marker) {
@@ -613,16 +585,19 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
 
     public void startPauseTrack(@SuppressWarnings("unused") View view) {
         // Reinitialize alarm time
-        alarm = new AlarmReceiver();
         if (isTracking) {
             stopLocationRequest();
+            triggerAlarmManager(0);
             Toast.makeText(MapActivity.this, "Tracking paused.", Toast.LENGTH_SHORT).show();
             Log.i("startPauseTrack", "paused");
+
         } else {
             interval = MIN_INTERVAL; // reset to smallest interval, to start with precise coordinate calculation
             startLocationRequest();
+            stopAlarmManager();
             Toast.makeText(MapActivity.this, "Tracking restored.", Toast.LENGTH_SHORT).show();
             Log.i("startPauseTrack", "started");
+
         }
     }
 
@@ -633,12 +608,8 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         interval = MIN_INTERVAL;
         internalStorage.writeInterval(interval);
         // Manage wake up alerts
-        alarm = new AlarmReceiver();
-        alarm.setAlarm(this, interval);
         renewLocationRequest();
-        addNotificationIcon();
         // Hide search options
-        //findViewById(R.id.button).setVisibility(View.GONE);
         findViewById(R.id.place_autocomplete_fragment).setVisibility(View.GONE);
         // Toggle tracking button view
         Button button = (Button) findViewById(R.id.startpause);
@@ -674,12 +645,10 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         //Set new schedules for alarm
         alarmRadius = ((int) (alarmRadius * 1.2) + 50); // FIXME just for testing
         maximumSpeed = ((int) (maximumSpeed * 1.2) + 10); // !!!
-        if (getEstimate() != Estimate.DISABLED) { // Renew alarm schedule, if scheduler should be used
-            AlarmReceiver alarmReceiver = new AlarmReceiver();
-            alarmReceiver.setAlarm(this, interval);
-            Log.v("renewLocationRequest", "alarm reshceduled after:" + interval);
+        if (getEstimate() != Estimate.DISABLED) {
+            Log.v("renewLocationRequest", "alarm rescheduled after:" + interval);
         }
-        hanldleLastLocation();
+        handleLastLocation();
     }
 
     void stopLocationRequest() { //NOTE: Stop tracking location
@@ -689,8 +658,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         }
         locationRequest = null;
         isTracking = false;
-        alarm.releaseWakeLock();
-        alarm = null;
         Button button = (Button) findViewById(R.id.startpause);
         button.setBackgroundColor(Color.GREEN);
         button.setText("Start tracking");
@@ -723,25 +690,6 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         }
     }
 
-    public void addNotificationIcon() {
-        Builder mBuilder = new Builder(this)
-                .setSmallIcon(R.drawable.ic_launcher_web)
-                .setContentTitle("GPSAlarm")
-                .setContentText("Programm Running")
-                .setOngoing(true)
-                .setAutoCancel(false)
-                .setPriority(Notification.PRIORITY_MIN);
-        Intent resultIntent = new Intent(this,
-                MapActivity.class);
-        resultIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0,
-                resultIntent, PendingIntent.FLAG_UPDATE_CURRENT);
-        mBuilder.setContentIntent(pendingIntent);
-        NotificationManager notificationManager =
-                (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        notificationManager.notify(NOTIFICATION_ID, mBuilder.build());
-    }
-
     @Override
     // Invoked when location change event occurs
     public void onLocationChanged(Location location) {
@@ -770,12 +718,12 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         return Estimate.NEAR;         // less than 2 minutes for ongoing, or new request
     }
 
-    void hanldleLastLocation() {
-        Log.v("hanldleLastLocation", "started");
+    void handleLastLocation() {
+        Log.v("handleLastLocation", "started");
         Location target = internalStorage.readLocation(TARGET_ID);
         Location location = internalStorage.readLocation(LOCATION_ID);
         if (target == null || location == null) {
-            Log.d("hanldleLastLocation", "target: " + target + " location:" + location);
+            Log.d("handleLastLocation", "target: " + target + " location:" + location);
             return;
         }
         double distance = 0;
@@ -784,10 +732,10 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         // Check if reached destination
         if (distance <= alarmRadius) {
             if (!userNotified) {
-                //  lock is aquired in AlarmReceiver
+                //  lock is acquired in AlarmReceiver
                 Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
                 v.vibrate(new long[]{0, 300, 300, 300, 300, 600}, -1); // vibrate with pattern
-                mediaPlayer.start();
+                triggerAlarmManager(0);
                 userNotified = true;
                 stopLocationRequest();
                 findViewById(R.id.startpause).setVisibility(View.GONE);
@@ -796,20 +744,19 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
                         (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                 notificationManager.cancel(NOTIFICATION_ID);
             }
-            Log.i("hanldleLastLocation", "destination reached");
+            Log.i("handleLastLocation", "destination reached");
         } else {
             // Else set interval for location, depending on distance
-            interval = (int) (3600 * distance / maximumSpeed); // distance is in m, but speed in km
+            interval = (int) ((0.001*distance) / maximumSpeed) * 3600; //time = distance / speed
             if (interval < MIN_INTERVAL) interval = MIN_INTERVAL; // preserve minimal interval to 1s
             internalStorage.writeInterval(interval);
             if (getEstimate() == Estimate.NEAR) {
-                Log.d("hanldleLastLocation", "wakeLock hold");
+                Log.d("handleLastLocation", "wakeLock hold");
             } else {
-                alarm.releaseWakeLock();
-                Log.d("hanldleLastLocation", "wakeLock released");
+                Log.d("handleLastLocation", "wakeLock released");
             }
         }
-        Log.d("hanldleLastLocation", "" +
+        Log.d("handleLastLocation", "" +
                 "\nmaxSpeed: " + String.valueOf(maximumSpeed) + "km/h" +
                 "\nalarmRad: " + alarmRadius + "m" +
                 "\ninterval: " + interval + "s" +
@@ -824,4 +771,65 @@ public class MapActivity extends AppCompatActivity implements OnMapReadyCallback
         if (internalStorage.getContext() == null)
             internalStorage.setContext(this);
     }
+
+    @Override
+    protected void onResume(){
+        super.onResume();
+        Log.d(TAG, "onResume(MapActivity) called");
+    }
+
+    @Override
+    protected void onPause(){
+        super.onPause();
+        Log.d(TAG, "onPause(MapActivity) called");
+    }
+
+    @Override
+    protected void onStop(){
+        super.onStop();
+        Log.d(TAG, "onStop(MapActivity) called");
+
+    }
+
+    @Override
+    protected void onDestroy(){
+        super.onDestroy();
+        stopAlarmManager();
+        Log.d(TAG, "onDestroy(MapActivity) called");
+    }
+
+    //Called when a person arrives at destination
+    private void triggerAlarmManager(int alarmTriggerTime){
+        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        alarmManager.set(AlarmManager.RTC_WAKEUP, (alarmTriggerTime * 1000), pendingIntent);
+        setStatusForAlarm(0x0110);
+        Log.d("AlarmManager", "Destination reached!");
+    }
+
+    //Called when LocationManager is needed
+    private void triggerAlarmManager(){
+        //pass command to LocationManager
+
+        setStatusForAlarm(0x0001);
+    }
+
+    private void stopAlarmManager(){
+        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        alarmManager.cancel(pendingIntent);
+
+        stopService(new Intent(MapActivity.this, AlarmSoundService.class));
+
+        NotificationManager notificationManager = (NotificationManager) this
+                .getSystemService(Context.NOTIFICATION_SERVICE);
+        notificationManager.cancel(AlarmNotificationService.NOTIFICATION_ID);
+    }
+
+    //Helper setter and getter
+    public int getStatusForAlarm(){
+        return this.statusForAlarm;
+    }
+    public void setStatusForAlarm(int status){
+        this.statusForAlarm = status;
+    }
+
 }

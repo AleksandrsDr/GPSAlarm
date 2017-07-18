@@ -1,10 +1,14 @@
 package org.gpsalarm;
 
+import android.app.Dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.location.Location;
+import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
@@ -19,6 +23,12 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.LocationListener;
+import com.google.android.gms.location.LocationServices;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -29,11 +39,46 @@ import java.util.Comparator;
  * or goes to MapActivity
  */
 
-public class StartActivity extends AppCompatActivity {
+/* TODO
+    1) Set AlarmManager reinitialization time
+    2) onCreate - initialize GPS services and perform checks
+    3)
+ */
+
+public class StartActivity extends AppCompatActivity
+        implements GoogleApiClient.ConnectionCallbacks,
+                   GoogleApiClient.OnConnectionFailedListener,
+                   LocationListener {
+
     final String TAG = "StartActivity";
     LocationData selectedLocationData;
     ArrayList<LocationData> locationDataList = new ArrayList<>();
     InternalStorage internalStorage;
+
+    GoogleApiClient m_googleApiClient;
+
+
+
+    @Override
+    public void onConnected(@Nullable Bundle bundle) {
+        Log.i(TAG, "Location services connected.");
+    }
+
+    @Override
+    public void onConnectionSuspended(int i) {
+        Log.i(TAG, "Location services suspended. Please reconnect.");
+    }
+
+    @Override
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+        Log.i(TAG, "Connection to Location services failed");
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+        Log.i(TAG, "Location changed");
+    }
+
 
     // This class is used to provide alphabetic sorting for LocationData list
     class CustomAdapter extends ArrayAdapter<LocationData> {
@@ -55,10 +100,38 @@ public class StartActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        Log.v(TAG, "onCreate started");
+        Log.v(TAG, "onCreate(StartActivity) started");
         super.onCreate(savedInstanceState);
         internalStorage = new InternalStorage();
         internalStorage.setContext(this);
+
+        if(!googleServicesAvailable()){
+            /*AlertDialog.Builder builder;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                builder = new AlertDialog.Builder(getApplicationContext(), android.R.style.Theme_Material_Dialog_Alert);
+            } else {
+                builder = new AlertDialog.Builder(getApplicationContext());
+            }
+            builder.setTitle("Services missing")
+                    .setMessage("Google Play Services missing from this device. Install it and try again!")
+                    .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
+                        public void onClick(DialogInterface dialog, int which) {
+                            System.exit(22);
+                        }
+                    })
+                    .setIcon(android.R.drawable.ic_dialog_alert)
+                    .show();*/
+            System.exit(22);
+        }
+
+        if(getIntent().getBooleanExtra("Exit", false)) finish();
+
+        m_googleApiClient = new GoogleApiClient.Builder(this)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .addApi(LocationServices.API)
+                .build();
+
 
         locationDataList = internalStorage.readLocationDataList();
         Log.v(TAG, "onCreate, locationDataList" + locationDataList);
@@ -94,7 +167,7 @@ public class StartActivity extends AppCompatActivity {
             });
 
             myListView2.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
-                @Override //NOTE delete saved point, if selection is long-pressed
+                @Override //NOTE: delete saved point, if selection is long-pressed
                 public boolean onItemLongClick(AdapterView<?> adapterView, View view, final int i, long l) {
                     AlertDialog.Builder alert = new AlertDialog.Builder(StartActivity.this); //NOTE: build confirmation AlertDialog
                     alert.setMessage("Are you sure you want to delete this?");
@@ -143,6 +216,8 @@ public class StartActivity extends AppCompatActivity {
                 intent = new Intent(this, HelpActivity.class);
                 this.startActivity(intent);
                 return true;
+            case R.id.menuItemExit:
+                System.exit(0);
             default:
                 return super.onOptionsItemSelected(item);
         }
@@ -154,5 +229,53 @@ public class StartActivity extends AppCompatActivity {
         startActivity(intent);
     }
 
+    @Override
+    protected void onResume(){
+        super.onResume();
+        Log.d(TAG, "onResume(StartActivity) called");
+        m_googleApiClient.connect();
+    }
+
+    @Override
+    protected void onPause(){
+        super.onPause();
+        Log.d(TAG, "onPause(StartActivity) called");
+        if (m_googleApiClient.isConnected()) {
+            m_googleApiClient.disconnect();
+        }
+    }
+
+    @Override
+    protected void onStop(){
+        super.onStop();
+        Log.d(TAG, "onStop(StartActivity) called");
+    }
+
+    @Override
+    protected void onDestroy(){
+        super.onDestroy();
+        stopService(new Intent(this, AlarmSoundService.class));
+        stopService(new Intent(this, AlarmNotificationService.class));
+        Log.d(TAG, "onDestroy(StartActivity) called");
+    }
+
+    public boolean googleServicesAvailable() {
+        GoogleApiAvailability api = GoogleApiAvailability.getInstance();
+        int isAvailable = api.isGooglePlayServicesAvailable(this);      // Can return 3 different values
+
+        if (isAvailable == ConnectionResult.SUCCESS) {
+            return true;
+        } else if (api.isUserResolvableError(isAvailable)) {
+            Dialog dialog = api.getErrorDialog(this, isAvailable, 0);
+            dialog.show();
+        } else if (api.isUserResolvableError(isAvailable)) {
+            Dialog dialog = api.getErrorDialog(this, isAvailable, 0);
+            dialog.show();
+        } else {
+            Toast.makeText(this, "Can't connect to play services! Exiting...", Toast.LENGTH_LONG).show();
+        }
+
+        return false;
+    }
 
 }
