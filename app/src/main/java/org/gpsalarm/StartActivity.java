@@ -56,6 +56,9 @@ public class StartActivity extends AppCompatActivity
     private boolean checkedWiFi = false;
     private int statusForAlarm;
 
+    public boolean isAlarm=false;
+    private boolean isAlarmRead=false;
+
     LocationData selectedLocationData;
     ArrayList<LocationData> locationDataList = new ArrayList<>();
     InternalStorage internalStorage;
@@ -66,6 +69,8 @@ public class StartActivity extends AppCompatActivity
 
     LocationManager locationManager;
     WifiManager wifiManager;
+
+    private TextView tCurrentLocation;
 
 
 
@@ -136,8 +141,16 @@ public class StartActivity extends AppCompatActivity
         double currentLongitude = location.getLongitude();
 
         LatLng latLng = new LatLng(currentLatitude, currentLongitude);
+        tCurrentLocation.setText("Current location: lat: "+currentLatitude+" lng: "+currentLongitude);
+
+        if (inCircle()) isAlarm=true;
 
         Log.i(TAG, "Location is: "+location.toString());
+    }
+
+    private boolean inCircle() {
+
+        return true;
     }
 
     // This class is used to provide alphabetic sorting for LocationData list
@@ -165,6 +178,8 @@ public class StartActivity extends AppCompatActivity
         super.onCreate(savedInstanceState);
         internalStorage = new InternalStorage();
         internalStorage.setContext(this);
+
+        tCurrentLocation = (TextView)findViewById(R.id.textView3);
 
         if(!googleServicesAvailable()){
             AlertDialog.Builder builder;
@@ -197,8 +212,8 @@ public class StartActivity extends AppCompatActivity
 
         // Create the LocationRequest object
         mLocationRequest = LocationRequest.create()
-                .setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY)
-                .setInterval(20 * 1000)        // 20 seconds, in milliseconds
+                .setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY)
+                .setInterval(60 * 1000)        // 20 seconds, in milliseconds
                 .setFastestInterval(10 * 1000); // 10 second, in milliseconds
 
 
