@@ -24,8 +24,6 @@ public class AlarmSoundService extends Service{
     public void onCreate(){
         super.onCreate();
 
-        //Uri alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
-
         mediaPlayer = MediaPlayer.create(this, R.raw.annoying);
         mediaPlayer.start();
         mediaPlayer.setLooping(true);

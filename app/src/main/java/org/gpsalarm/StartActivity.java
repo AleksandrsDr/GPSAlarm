@@ -1,9 +1,15 @@
 package org.gpsalarm;
 
+import android.app.ActivityManager;
+import android.app.AlarmManager;
 import android.app.Dialog;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.location.LocationManager;
@@ -11,6 +17,8 @@ import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.os.SystemClock;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
@@ -24,6 +32,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -46,30 +55,25 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Map;
 
-public class StartActivity extends AppCompatActivity
-        implements GoogleApiClient.ConnectionCallbacks,
-        GoogleApiClient.OnConnectionFailedListener,
-        LocationListener {
+public class StartActivity extends AppCompatActivity {
 
     final String TAG = "StartActivity";
     private boolean checkedWiFi = false;
-    private int statusForAlarm;
 
-    public boolean isAlarm=false;
-    private boolean isAlarmRead=false;
+    private PendingIntent pendingIntent;
+    private boolean currentlyTracking;
+    private int intervalSec = 61;
+    private AlarmManager alarmManager;
 
     LocationData selectedLocationData;
     ArrayList<LocationData> locationDataList = new ArrayList<>();
     InternalStorage internalStorage;
 
-    GoogleApiClient m_googleApiClient;
-
-    private LocationRequest mLocationRequest;
-
     LocationManager locationManager;
     WifiManager wifiManager;
 
     private TextView tCurrentLocation;
+    private Button trackingButton;
 
     public String addressName;
     public LatLng addressGeo;
@@ -77,89 +81,10 @@ public class StartActivity extends AppCompatActivity
     private double currentLng;
     private double destinationLat;
     private double destinationLng;
+    private Intent trackGPS;
+    private boolean destPassed;
 
 
-
-
-    @Override
-    public void onConnected(@Nullable Bundle bundle) {
-
-
-        if (ActivityCompat.checkSelfPermission(this,
-                android.Manifest.permission.ACCESS_FINE_LOCATION) !=
-                PackageManager.PERMISSION_GRANTED &&
-                ActivityCompat.checkSelfPermission(this,
-                            android.Manifest.permission.ACCESS_COARSE_LOCATION)
-                            != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
-
-            Log.i(TAG, "No permissions");
-
-            //return;
-        }
-        else{
-            Location location = LocationServices.FusedLocationApi.getLastLocation(m_googleApiClient);
-            if (location == null) {
-                LocationServices.FusedLocationApi.requestLocationUpdates(m_googleApiClient, mLocationRequest, this);
-                Log.i(TAG, "Location is null.");
-            }
-            else {
-                handleNewLocation(location);
-                Log.i(TAG, "Location is handled.");
-            }
-
-        }
-
-        Log.i(TAG, "Location services connected.");
-
-    }
-
-    @Override
-    public void onConnectionSuspended(int i) {
-        Log.i(TAG, "Location services suspended. Please reconnect.");
-    }
-
-    @Override
-    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-
-        Log.i(TAG, "Location services connection failed with code " + connectionResult.getErrorCode());
-        Log.i(TAG, "Connection to Location services failed");
-
-    }
-
-    @Override
-    public void onLocationChanged(Location location) {
-
-        handleNewLocation(location);
-        Log.i(TAG, "Location changed");
-
-    }
-
-    private void handleNewLocation(Location location) {
-
-        double currentLatitude = location.getLatitude();
-        double currentLongitude = location.getLongitude();
-
-        setCurrentLat(currentLatitude);
-        setCurrentLng(currentLongitude);
-        //LatLng latLng = new LatLng(currentLatitude, currentLongitude);
-        tCurrentLocation.setText("Current location: lat: "+currentLatitude+" lng: "+currentLongitude);
-
-        if (inCircle()) isAlarm=true;
-
-        Log.i(TAG, "Location is: "+location.toString());
-    }
-
-    private boolean inCircle() {
-
-        return true;
-    }
 
     // This class is used to provide alphabetic sorting for LocationData list
     class CustomAdapter extends ArrayAdapter<LocationData> {
@@ -187,53 +112,22 @@ public class StartActivity extends AppCompatActivity
         internalStorage = new InternalStorage();
         internalStorage.setContext(this);
 
-        tCurrentLocation = (TextView)findViewById(R.id.textView3);
-
         if(!googleServicesAvailable()){
-            AlertDialog.Builder builder;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                builder = new AlertDialog.Builder(getApplicationContext(), android.R.style.Theme_Material_Dialog_Alert);
-            } else {
-                builder = new AlertDialog.Builder(getApplicationContext());
-            }
-            builder.setTitle("Services missing")
-                    .setMessage("Google Play Services missing from this device. Install it and try again!")
-                    .setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
-                        public void onClick(DialogInterface dialog, int which) {
-                            System.exit(22);
-                        }
-                    })
-                    .setIcon(android.R.drawable.ic_dialog_alert)
-                    .show();
             System.exit(22);
         }
         checkGPS();
         checkAndConnect();
 
-        if(getIntent().getBooleanExtra("Exit", false)) finish();
-
-        m_googleApiClient = new GoogleApiClient.Builder(this)
-                .addConnectionCallbacks(this)
-                .addOnConnectionFailedListener(this)
-                .addApi(LocationServices.API)
-                .build();
-
-        // Create the LocationRequest object
-        mLocationRequest = LocationRequest.create()
-                .setPriority(LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY)
-                .setInterval(60 * 1000)        // 20 seconds, in milliseconds
-                .setFastestInterval(10 * 1000); // 10 second, in milliseconds
-
-
         locationDataList = internalStorage.readLocationDataList();
 
         Log.i(TAG, "onCreate, locationDataList" + locationDataList);
 
-
-            setContentView(R.layout.activity_start);
+        setContentView(R.layout.activity_start);
         tCurrentLocation = (TextView)findViewById(R.id.textView3);
-            final ArrayAdapter myAdapter = new CustomAdapter(this, locationDataList);
-            ListView listView = (ListView) findViewById(R.id.listView);
+        trackingButton = (Button)findViewById(R.id.tracker);
+
+        final ArrayAdapter myAdapter = new CustomAdapter(this, locationDataList);
+        ListView listView = (ListView) findViewById(R.id.listView);
 
             Collections.sort(locationDataList, new Comparator<LocationData>() {
 
@@ -301,7 +195,15 @@ public class StartActivity extends AppCompatActivity
                     double destLat = addressGeo.latitude;
                     double destLng = addressGeo.longitude;
                     setDestinationLat(destLat);
-                    setCurrentLng(destLng);
+                    setDestinationLng(destLng);
+                    destPassed = true;
+                    currentlyTracking = true;
+                    triggerAlarmManager();
+                    setButtonState();
+                    Intent serviceIntent = new Intent(StartActivity.this, CoordService.class);
+                    serviceIntent.putExtra("DestLat", destLat);
+                    serviceIntent.putExtra("DestLng", destLng);
+                    startService(serviceIntent);
                 } else {
                     Toast.makeText(getApplicationContext(), "No such location found. \nTry a different keyword.", Toast.LENGTH_LONG).show();
                 }
@@ -312,75 +214,72 @@ public class StartActivity extends AppCompatActivity
 
             }
         });
+        trackingButton.setOnClickListener(new View.OnClickListener(){
+            public void onClick(View view){
+                trackGPS(view);
+            }
+        });
+        registerReceiver(updateLocation, new IntentFilter("LOCATION_UPDATE"));
     }
 
-
-    @Override //NOTE: Options menu (top-right corner of the screen)
-    public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.menu, menu);
-        return super.onCreateOptionsMenu(menu);         // More on this line: http://stackoverflow.com/questions/10303898/oncreateoptionsmenu-calling-super
-    }
-
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        // Handle item selection
-        Intent intent;
-        switch (item.getItemId()) {
-            case R.id.menuItemSettings:
-                intent = new Intent(this, PreferencesActivity.class);
-                this.startActivity(intent);
-                return true;
-            case R.id.menuItemHelp:
-                intent = new Intent(this, HelpActivity.class);
-                this.startActivity(intent);
-                return true;
-            case R.id.menuItemExit:
-                System.exit(0);
-            default:
-                return super.onOptionsItemSelected(item);
+    private BroadcastReceiver updateLocation = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            tCurrentLocation.setText("Current location: Lat: "+intent.getExtras().getDouble("latitude")+
+                    " Lng: "+intent.getExtras().getDouble("longitude"));
         }
+    };
+
+
+    protected void trackGPS(View view) {
+        if (!googleServicesAvailable()) {
+            return;
+        }
+        if (destPassed) {
+            if (currentlyTracking) {
+                stopAlarmManager();
+                currentlyTracking = false;
+            } else {
+                triggerAlarmManager();
+                currentlyTracking = true;
+            }
+            setButtonState();
+        } else Toast.makeText(this, "No destination set", Toast.LENGTH_LONG).show();
     }
 
-
-    public void toMap(@SuppressWarnings("unused") View view) {
-        //Intent intent = new Intent(this, MapActivity.class);
-        //startActivity(intent);
+    private void setButtonState(){
+        if(!currentlyTracking){
+            trackingButton.setText("Tracking STOPPED");
+        } else{
+            trackingButton.setText("Tracking STARTED");
+        }
     }
 
     @Override
     protected void onResume(){
         super.onResume();
         Log.i(TAG, "onResume(StartActivity) called");
-        if (!m_googleApiClient.isConnected()) {
-             m_googleApiClient.connect();
-        }
+        setButtonState();
     }
 
     @Override
     protected void onPause(){
         super.onPause();
         Log.i(TAG, "onPause(StartActivity) called");
-        if (m_googleApiClient.isConnected()) {
-
-            LocationServices.FusedLocationApi.removeLocationUpdates(m_googleApiClient, this);
-
-            m_googleApiClient.disconnect();
-
-
-        }
     }
 
     @Override
     protected void onStop(){
         super.onStop();
         Log.i(TAG, "onStop(StartActivity) called");
+
     }
 
     @Override
     protected void onDestroy(){
+        unregisterReceiver(updateLocation);
+        stopAlarmManager();
         super.onDestroy();
-        stopService(new Intent(this, AlarmSoundService.class));
-        stopService(new Intent(this, AlarmNotificationService.class));
         Log.i(TAG, "onDestroy(StartActivity) called");
     }
 
@@ -411,7 +310,7 @@ public class StartActivity extends AppCompatActivity
 
     private void buildAlertMessageNoGps() {
         final AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setMessage("Your GPS seems to be disabled, do you want to enable it?\n" + "\"If no, programm will be closed.\"")
+        builder.setMessage("Your GPS seems to be disabled, do you want to enable it?\n" + "\"If no, program will be closed.\"")
                 .setCancelable(false)
                 .setPositiveButton("Yes", new DialogInterface.OnClickListener() {
                     public void onClick(@SuppressWarnings("unused") final DialogInterface dialog, @SuppressWarnings("unused") final int id) {
@@ -466,13 +365,23 @@ public class StartActivity extends AppCompatActivity
     }
 
     private void triggerAlarmManager(){
-        //pass command to LocationManager
-        double distance;
-        if(addressGeo!=null)    distance = haversine(getCurrentLat(), getCurrentLng(), getDestinationLat(), getDestinationLng());
+        Log.d("StartActivity", "triggerAlarmManager");
+
+        Context context = getBaseContext();
+        alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        trackGPS = new Intent(context, AlarmReceiver.class);
+        pendingIntent = PendingIntent.getBroadcast(context, 0, trackGPS, 0);
+
+        alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, SystemClock.elapsedRealtime(), intervalSec * 1000, pendingIntent);
     }
 
-    public int getStatusForAlarm(){
-        return statusForAlarm;
+    private void stopAlarmManager(){
+        Log.d("StartActivity", "stopAlarmManager");
+        Context context = getBaseContext();
+        Intent trackGPS = new Intent(context, AlarmReceiver.class);
+        PendingIntent pendingIntent = PendingIntent.getBroadcast(context, 0, trackGPS, 0);
+        AlarmManager alarmManager = (AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
+        alarmManager.cancel(pendingIntent);
     }
 
     double haversine(double lat1, double lon1, double lat2, double lon2) {
@@ -505,4 +414,5 @@ public class StartActivity extends AppCompatActivity
     public double getDestinationLng(){
         return destinationLng;
     }
+
 }

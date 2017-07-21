@@ -7,21 +7,20 @@
     android:layout_height="match_parent">
 
      <Button
-        android:text="To Map"
-        android:layout_height="60dp"
+        android:text="Tracking OFF"
+        android:layout_height="50dp"
          android:background="@android:color/holo_green_light"
-        android:id="@+id/ToMap"
+        android:id="@+id/tracker"
          android:layout_marginBottom="0dp"
         android:layout_width="match_parent"
         android:layout_alignParentTop="true"
         android:layout_alignParentLeft="true"
         android:layout_alignParentStart="true"
-        android:onClick="toMap"
         tools:ignore="HardcodedText"
         tools:layout_below="@+id/listView" />
 
     <TextView
-        android:layout_marginTop="70dp"
+        android:layout_marginTop="60dp"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
         android:textSize="25dp"
@@ -34,7 +33,7 @@
         android:id="@+id/place_fragment"
         android:layout_width="match_parent"
         android:name="com.google.android.gms.location.places.ui.PlaceAutocompleteFragment"
-        android:layout_height="wrap_content"
+        android:layout_height="40dp"
         android:layout_marginTop="100dp"
         android:windowSoftInputMode="adjustPan"/>
 
@@ -43,7 +42,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_centerHorizontal="true"
-        android:layout_marginTop="130dp"
+        android:layout_marginTop="160dp"
         android:paddingLeft="15dp"
         android:text="Current location: "
         android:textAppearance="@style/TextAppearance.AppCompat.Medium"

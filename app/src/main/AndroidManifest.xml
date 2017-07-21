@@ -63,6 +63,7 @@
 
         <service android:name=".AlarmNotificationService" />
         <service android:name=".AlarmSoundService" />
+        <service android:name=".CoordService" />
 
         <!-- TODO should use new key AIzaSyCbsL3lrU-8yCmTRTgvtl___WD5rkplkcM here -->
         <meta-data
